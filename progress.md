@@ -12,6 +12,7 @@
 ### 参考資料
 
 - **2505.13447v1.pdf**: MeanFlow元論文（./references/2505.13447v1.pdf）
+- **2209.03003v1.pdf**: RectifiedFlow元論文（./references/2209.03003v1.pdf）
 
 ### 参考リポジトリ
 
