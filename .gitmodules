@@ -1,0 +1,18 @@
+[submodule "references/check_diffusion_sine"]
+	path = references/check_diffusion_sine
+	url = git@github.com:Hiroshiba/check_diffusion_sine.git
+[submodule "references/meanflow-jax"]
+	path = references/meanflow-jax
+	url = git@github.com:Gsunshine/meanflow.git
+[submodule "references/py-meanflow"]
+	path = references/py-meanflow
+	url = git@github.com:Gsunshine/py-meanflow.git
+[submodule "references/MeanFlow-zhuyu"]
+	path = references/MeanFlow-zhuyu
+	url = git@github.com:zhuyu-cs/MeanFlow.git
+[submodule "references/MeanFlow-PyTorch"]
+	path = references/MeanFlow-PyTorch
+	url = git@github.com:HaoyiZhu/MeanFlow-PyTorch.git
+[submodule "references/MeanFlow-haidog"]
+	path = references/MeanFlow-haidog
+	url = git@github.com:haidog-yaqub/MeanFlow.git
