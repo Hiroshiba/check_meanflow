@@ -41,7 +41,7 @@ def test_dataset_creation(train_config: Config) -> None:
     assert datasets.train is not None
     assert datasets.test is not None
     assert datasets.eval is not None
-    assert datasets.valid is not None
+    assert datasets.valid is None
 
 
 def test_model_creation(train_config: Config) -> None:
