@@ -27,7 +27,6 @@ class OutputData:
     lf0: Tensor
     t: Tensor
     r: Tensor
-    h: Tensor
     speaker_id: Tensor
 
 
@@ -95,8 +94,6 @@ def preprocess(
             case _:
                 assert_never(flow_type)
 
-    h = t - r
-
     noise_wave = rng.standard_normal(target_wave.shape)
     input_wave = noise_wave + t * (target_wave - noise_wave)
 
@@ -109,6 +106,5 @@ def preprocess(
         lf0=torch.from_numpy(lf0_array),
         t=torch.tensor(t, dtype=torch.float32),
         r=torch.tensor(r, dtype=torch.float32),
-        h=torch.tensor(h, dtype=torch.float32),
         speaker_id=torch.tensor(d.speaker_id, dtype=torch.long),
     )

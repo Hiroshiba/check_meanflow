@@ -15,13 +15,7 @@ class _Model(BaseModel):
 class DataFileConfig(_Model):
     """データファイルの設定"""
 
-    feature_vector_pathlist_path: UPathField
-    feature_variable_pathlist_path: UPathField
-    target_vector_pathlist_path: UPathField
-    target_variable_pathlist_path: UPathField
-    target_scalar_pathlist_path: UPathField
-    speaker_dict_path: UPathField
-    root_dir: UPathField | None
+    pass
 
 
 class DatasetConfig(_Model):

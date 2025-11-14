@@ -27,14 +27,11 @@ class ModelOutput(DataNumProtocol):
     """逆伝播させる損失"""
 
     mse_loss: Tensor
-    adaptive_weight_mean: Tensor | None
 
     def detach_cpu(self) -> Self:
         """全てのTensorをdetachしてCPUに移動"""
         self.loss = detach_cpu(self.loss)
         self.mse_loss = detach_cpu(self.mse_loss)
-        if self.adaptive_weight_mean is not None:
-            self.adaptive_weight_mean = detach_cpu(self.adaptive_weight_mean)
         return self
 
 
@@ -82,17 +79,16 @@ class Model(nn.Module):
         return ModelOutput(
             loss=mse,
             mse_loss=mse,
-            adaptive_weight_mean=None,
             data_num=batch.data_num,
         )
 
     def _forward_meanflow(self, batch: BatchOutput) -> ModelOutput:
         """MeanFlowの損失を計算"""
         lengths = get_lengths(batch.input_wave_list)  # (B,)
-        padded_input_wave = pad_tensor_list(batch.input_wave_list)  # (B, L, 1)
-        padded_lf0 = pad_tensor_list(batch.lf0_list)  # (B, L, 1)
         mask = create_padding_mask(lengths)  # (B, 1, L)
 
+        padded_input_wave = pad_tensor_list(batch.input_wave_list)  # (B, L, 1)
+        padded_lf0 = pad_tensor_list(batch.lf0_list)  # (B, L, 1)
         padded_target_wave = pad_tensor_list(batch.target_wave_list)  # (B, L, 1)
         padded_noise_wave = pad_tensor_list(batch.noise_wave_list)  # (B, L, 1)
         padded_target_v = padded_target_wave - padded_noise_wave  # (B, L, 1)
@@ -122,25 +118,27 @@ class Model(nn.Module):
 
         batch_size = batch.t.shape[0]
         max_length = padded_input_wave.size(1)
-        h_expanded = batch.h.unsqueeze(1).expand(batch_size, max_length)  # (B, L)
+        h_expanded = (
+            (batch.t - batch.r).unsqueeze(1).expand(batch_size, max_length)
+        )  # (B, L)
 
         u_tgt = padded_target_v.squeeze(-1) - h_expanded * du_dt  # (B, L)
-
-        p = self.model_config.adaptive_weighting_p
-        eps = self.model_config.adaptive_weighting_eps
         mse_per_element = (u_pred - u_tgt.detach()) ** 2  # (B, L)
-        weight = 1 / (mse_per_element.detach() + eps) ** p  # (B, L)
 
         mask_2d = mask.squeeze(1)  # (B, L)
-        masked_weighted_loss = weight * mse_per_element * mask_2d  # (B, L)
         masked_mse = mse_per_element * mask_2d  # (B, L)
-
-        loss = masked_weighted_loss.sum() / mask_2d.sum()
         mse = masked_mse.sum() / mask_2d.sum()
+
+        loss_per_sample = masked_mse.sum(dim=1) / mask_2d.sum(dim=1)  # (B,)
+        adp_wt = (
+            loss_per_sample.detach() + self.model_config.adaptive_weighting_eps
+        ) ** self.model_config.adaptive_weighting_p  # (B,)
+        loss_per_sample = loss_per_sample / adp_wt  # (B,)
+
+        loss = loss_per_sample.mean()
 
         return ModelOutput(
             loss=loss,
             mse_loss=mse,
-            adaptive_weight_mean=weight.mean(),
             data_num=batch.data_num,
         )

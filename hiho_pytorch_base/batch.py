@@ -20,7 +20,6 @@ class BatchOutput:
     lf0_list: list[Tensor]  # [(L, 1)]
     t: Tensor  # (B,)
     r: Tensor  # (B,)
-    h: Tensor  # (B,)
     speaker_id: Tensor  # (B,)
 
     @property
@@ -42,7 +41,6 @@ class BatchOutput:
         self.lf0_list = to_device(self.lf0_list, device, non_blocking=non_blocking)
         self.t = to_device(self.t, device, non_blocking=non_blocking)
         self.r = to_device(self.r, device, non_blocking=non_blocking)
-        self.h = to_device(self.h, device, non_blocking=non_blocking)
         self.speaker_id = to_device(self.speaker_id, device, non_blocking=non_blocking)
         return self
 
@@ -64,6 +62,5 @@ def collate_dataset_output(data_list: list[OutputData]) -> BatchOutput:
         lf0_list=[d.lf0 for d in data_list],
         t=collate_stack([d.t for d in data_list]),
         r=collate_stack([d.r for d in data_list]),
-        h=collate_stack([d.h for d in data_list]),
         speaker_id=collate_stack([d.speaker_id for d in data_list]),
     )
