@@ -14,7 +14,6 @@ import gradio as gr
 import japanize_matplotlib  # noqa: F401 日本語フォントに必須
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import yaml
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
@@ -34,8 +33,12 @@ from hiho_pytorch_base.dataset import (
 class DataInfo:
     """データ情報"""
 
-    target_vector: np.ndarray
-    target_scalar: float
+    input_wave: np.ndarray
+    target_wave: np.ndarray
+    noise_wave: np.ndarray
+    lf0: np.ndarray
+    t: float
+    r: float
     speaker_id: int
     details: str
 
@@ -44,10 +47,14 @@ class DataInfo:
 class FigureState:
     """図の状態"""
 
-    feature_vector_fig: Figure | None = None
-    feature_variable_fig: Figure | None = None
-    feature_vector_line: Line2D | None = None
-    feature_variable_line: Line2D | None = None
+    input_wave_fig: Figure | None = None
+    target_wave_fig: Figure | None = None
+    noise_wave_fig: Figure | None = None
+    lf0_fig: Figure | None = None
+    input_wave_line: Line2D | None = None
+    target_wave_line: Line2D | None = None
+    noise_wave_line: Line2D | None = None
+    lf0_line: Line2D | None = None
 
 
 class VisualizationApp:
@@ -82,98 +89,157 @@ class VisualizationApp:
         return f"""
 設定ファイル: {self.config_path}
 
-固定長特徴ベクトル
-パス: {lazy_data.feature_vector_path}
-shape: {tuple(output_data.feature_vector.shape)}
+入力波形
+shape: {tuple(output_data.input_wave.shape)}
 
-可変長特徴データ
-パス: {lazy_data.feature_variable_path}
-shape: {tuple(output_data.feature_variable.shape)}
+ターゲット波形
+shape: {tuple(output_data.target_wave.shape)}
 
-サンプリングデータ
-パス: {lazy_data.target_vector_path}
-shape: {tuple(output_data.target_vector.shape)}
+ノイズ波形
+shape: {tuple(output_data.noise_wave.shape)}
 
-回帰ターゲット
-パス: {lazy_data.target_scalar_path}
-shape: {tuple(output_data.target_scalar.shape)}
+log F0
+shape: {tuple(output_data.lf0.shape)}
+
+時間パラメータ t: {output_data.t.item():.6f}
+比率パラメータ r: {output_data.r.item():.6f}
 
 話者ID: {output_data.speaker_id.item()}
+
+データ生成パラメータ:
+lf0範囲: [{lazy_data.lf0_low:.2f}, {lazy_data.lf0_high:.2f}]
+サンプリング長範囲: [{lazy_data.min_sampling_length}, {lazy_data.max_sampling_length}]
 """
 
-    def _setup_feature_vector_plot(self, data: np.ndarray) -> Figure:
+    def _setup_input_wave_plot(self, data: np.ndarray) -> Figure:
         if (
-            self.figure_state.feature_vector_fig is None
-            or self.figure_state.feature_vector_line is None
+            self.figure_state.input_wave_fig is None
+            or self.figure_state.input_wave_line is None
         ):
-            self.figure_state.feature_vector_fig, ax = plt.subplots(figsize=(10, 4))
+            self.figure_state.input_wave_fig, ax = plt.subplots(figsize=(10, 4))
             x_data = range(len(data))
-            (self.figure_state.feature_vector_line,) = ax.plot(x_data, data)
-            ax.set_title("固定長特徴ベクトル")
-            ax.set_xlabel("Index")
-            ax.set_ylabel("Value")
+            (self.figure_state.input_wave_line,) = ax.plot(x_data, data)
+            ax.set_title("入力波形")
+            ax.set_xlabel("Sample Index")
+            ax.set_ylabel("Amplitude")
             ax.grid(True)
         else:
             x_data = range(len(data))
-            self.figure_state.feature_vector_line.set_data(x_data, data)
-            ax = self.figure_state.feature_vector_fig.gca()
+            self.figure_state.input_wave_line.set_data(x_data, data)
+            ax = self.figure_state.input_wave_fig.gca()
             ax.relim()
             ax.autoscale_view()
-            self.figure_state.feature_vector_fig.canvas.draw()
+            self.figure_state.input_wave_fig.canvas.draw()
 
-        return self.figure_state.feature_vector_fig
+        return self.figure_state.input_wave_fig
 
-    def _setup_feature_variable_plot(self, data: np.ndarray) -> Figure:
+    def _setup_target_wave_plot(self, data: np.ndarray) -> Figure:
         if (
-            self.figure_state.feature_variable_fig is None
-            or self.figure_state.feature_variable_line is None
+            self.figure_state.target_wave_fig is None
+            or self.figure_state.target_wave_line is None
         ):
-            self.figure_state.feature_variable_fig, ax = plt.subplots(figsize=(10, 4))
+            self.figure_state.target_wave_fig, ax = plt.subplots(figsize=(10, 4))
             x_data = range(len(data))
-            (self.figure_state.feature_variable_line,) = ax.plot(x_data, data)
-            ax.set_title("可変長特徴データ")
-            ax.set_xlabel("Index")
-            ax.set_ylabel("Value")
+            (self.figure_state.target_wave_line,) = ax.plot(x_data, data)
+            ax.set_title("ターゲット波形")
+            ax.set_xlabel("Sample Index")
+            ax.set_ylabel("Amplitude")
             ax.grid(True)
         else:
             x_data = range(len(data))
-            self.figure_state.feature_variable_line.set_data(x_data, data)
-            ax = self.figure_state.feature_variable_fig.gca()
+            self.figure_state.target_wave_line.set_data(x_data, data)
+            ax = self.figure_state.target_wave_fig.gca()
             ax.relim()
             ax.autoscale_view()
-            self.figure_state.feature_variable_fig.canvas.draw()
+            self.figure_state.target_wave_fig.canvas.draw()
 
-        return self.figure_state.feature_variable_fig
+        return self.figure_state.target_wave_fig
+
+    def _setup_noise_wave_plot(self, data: np.ndarray) -> Figure:
+        if (
+            self.figure_state.noise_wave_fig is None
+            or self.figure_state.noise_wave_line is None
+        ):
+            self.figure_state.noise_wave_fig, ax = plt.subplots(figsize=(10, 4))
+            x_data = range(len(data))
+            (self.figure_state.noise_wave_line,) = ax.plot(x_data, data)
+            ax.set_title("ノイズ波形")
+            ax.set_xlabel("Sample Index")
+            ax.set_ylabel("Amplitude")
+            ax.grid(True)
+        else:
+            x_data = range(len(data))
+            self.figure_state.noise_wave_line.set_data(x_data, data)
+            ax = self.figure_state.noise_wave_fig.gca()
+            ax.relim()
+            ax.autoscale_view()
+            self.figure_state.noise_wave_fig.canvas.draw()
+
+        return self.figure_state.noise_wave_fig
+
+    def _setup_lf0_plot(self, data: np.ndarray) -> Figure:
+        if (
+            self.figure_state.lf0_fig is None
+            or self.figure_state.lf0_line is None
+        ):
+            self.figure_state.lf0_fig, ax = plt.subplots(figsize=(10, 4))
+            x_data = range(len(data))
+            (self.figure_state.lf0_line,) = ax.plot(x_data, data)
+            ax.set_title("log F0")
+            ax.set_xlabel("Sample Index")
+            ax.set_ylabel("log F0")
+            ax.grid(True)
+        else:
+            x_data = range(len(data))
+            self.figure_state.lf0_line.set_data(x_data, data)
+            ax = self.figure_state.lf0_fig.gca()
+            ax.relim()
+            ax.autoscale_view()
+            self.figure_state.lf0_fig.canvas.draw()
+
+        return self.figure_state.lf0_fig
 
     def _setup_plots(
         self, index: int, dataset_type: DatasetType
-    ) -> tuple[Figure, Figure]:
+    ) -> tuple[Figure, Figure, Figure, Figure]:
         """プロットを作成または更新"""
         output_data = self._get_output_data(index, dataset_type)
 
         # データの取得と整形
-        feature_vector_data = output_data.feature_vector.cpu().numpy().flatten()
-        feature_variable_data = output_data.feature_variable.cpu().numpy().flatten()
+        input_wave_data = output_data.input_wave.cpu().numpy().flatten()
+        target_wave_data = output_data.target_wave.cpu().numpy().flatten()
+        noise_wave_data = output_data.noise_wave.cpu().numpy().flatten()
+        lf0_data = output_data.lf0.cpu().numpy().flatten()
 
         # figureの更新または作成
-        feature_vector_plot = self._setup_feature_vector_plot(feature_vector_data)
-        feature_variable_plot = self._setup_feature_variable_plot(feature_variable_data)
+        input_wave_plot = self._setup_input_wave_plot(input_wave_data)
+        target_wave_plot = self._setup_target_wave_plot(target_wave_data)
+        noise_wave_plot = self._setup_noise_wave_plot(noise_wave_data)
+        lf0_plot = self._setup_lf0_plot(lf0_data)
 
-        return (feature_vector_plot, feature_variable_plot)
+        return (input_wave_plot, target_wave_plot, noise_wave_plot, lf0_plot)
 
     def _create_data_info(self, index: int, dataset_type: DatasetType) -> DataInfo:
         """データ情報を作成"""
         output_data = self._get_output_data(index, dataset_type)
         lazy_data = self._get_lazy_data(index, dataset_type)
 
-        target_vector = output_data.target_vector.cpu().numpy()
-        target_scalar = float(output_data.target_scalar.item())
+        input_wave = output_data.input_wave.cpu().numpy()
+        target_wave = output_data.target_wave.cpu().numpy()
+        noise_wave = output_data.noise_wave.cpu().numpy()
+        lf0 = output_data.lf0.cpu().numpy()
+        t = float(output_data.t.item())
+        r = float(output_data.r.item())
         speaker_id = int(output_data.speaker_id.item())
         details = self._create_details_text(output_data, lazy_data)
 
         return DataInfo(
-            target_vector=target_vector,
-            target_scalar=target_scalar,
+            input_wave=input_wave,
+            target_wave=target_wave,
+            noise_wave=noise_wave,
+            lf0=lf0,
+            t=t,
+            r=r,
             speaker_id=speaker_id,
             details=details,
         )
@@ -208,33 +274,43 @@ shape: {tuple(output_data.target_scalar.shape)}
             @gr.render(inputs=[current_index, current_dataset_type])
             def render_content(index: int, dataset_type: DatasetType) -> None:
                 # プロットとデータ情報を取得
-                feature_vector_plot, feature_variable_plot = self._setup_plots(
-                    index, dataset_type
-                )
+                (
+                    input_wave_plot,
+                    target_wave_plot,
+                    noise_wave_plot,
+                    lf0_plot,
+                ) = self._setup_plots(index, dataset_type)
                 data_info = self._create_data_info(index, dataset_type)
 
                 with gr.Row():
                     with gr.Column():
-                        gr.Markdown("### 固定長特徴ベクトル")
-                        gr.Plot(value=feature_vector_plot, label="feature_vector")
+                        gr.Markdown("### 入力波形")
+                        gr.Plot(value=input_wave_plot, label="input_wave")
 
                     with gr.Column():
-                        gr.Markdown("### 可変長特徴データ")
-                        gr.Plot(value=feature_variable_plot, label="feature_variable")
+                        gr.Markdown("### ターゲット波形")
+                        gr.Plot(value=target_wave_plot, label="target_wave")
 
                 with gr.Row():
                     with gr.Column():
-                        gr.Markdown("### サンプリングデータ")
-                        gr.DataFrame(
-                            value=pd.DataFrame(data_info.target_vector.reshape(1, -1)),
-                            label="target_vector",
-                        )
+                        gr.Markdown("### ノイズ波形")
+                        gr.Plot(value=noise_wave_plot, label="noise_wave")
 
                     with gr.Column():
-                        gr.Markdown("### その他の値")
+                        gr.Markdown("### log F0")
+                        gr.Plot(value=lf0_plot, label="lf0")
+
+                with gr.Row():
+                    with gr.Column():
+                        gr.Markdown("### パラメータ")
                         gr.Textbox(
-                            value=f"{data_info.target_scalar:.6f}",
-                            label="回帰ターゲット",
+                            value=f"{data_info.t:.6f}",
+                            label="時間パラメータ t",
+                            interactive=False,
+                        )
+                        gr.Textbox(
+                            value=f"{data_info.r:.6f}",
+                            label="比率パラメータ r",
                             interactive=False,
                         )
                         gr.Textbox(
