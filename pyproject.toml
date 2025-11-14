@@ -36,6 +36,7 @@ dev = [
 
 [tool.ruff]
 target-version = "py312"
+exclude = ["references"] # NOTE: サブモジュールのため除外
 
 [tool.ruff.lint]
 select = ["E", "F", "B", "I", "W", "UP", "D", "D213", "PT", "NPY"]
