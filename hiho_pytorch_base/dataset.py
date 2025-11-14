@@ -7,41 +7,36 @@ from enum import Enum
 from typing import assert_never
 
 import numpy
-from pydantic import TypeAdapter
 from torch.utils.data import Dataset as BaseDataset
-from upath import UPath
 
-from .config import DataFileConfig, DatasetConfig
+from .config import DatasetConfig
 from .data.data import InputData, OutputData, preprocess
-from .data.sampling_data import SamplingData
-from .utility.upath_utility import to_local_path
 
 
 @dataclass
 class LazyInputData:
     """遅延読み込み対応の入力データ構造"""
 
-    feature_vector_path: UPath
-    feature_variable_path: UPath
-    target_vector_path: UPath
-    target_variable_path: UPath
-    target_scalar_path: UPath
+    lf0_low: float
+    lf0_high: float
+    min_sampling_length: int
+    max_sampling_length: int
     speaker_id: int
 
     def fetch(self) -> InputData:
         """ファイルからデータを読み込んでInputDataを生成"""
+        rng = numpy.random.default_rng()
+        lf0 = rng.uniform(self.lf0_low, self.lf0_high)
+        if self.min_sampling_length == self.max_sampling_length:
+            sampling_length = self.max_sampling_length
+        else:
+            sampling_length = rng.integers(
+                self.min_sampling_length, self.max_sampling_length
+            )
+
         return InputData(
-            feature_vector=numpy.load(
-                to_local_path(self.feature_vector_path), allow_pickle=True
-            ),
-            feature_variable=numpy.load(
-                to_local_path(self.feature_variable_path), allow_pickle=True
-            ),
-            target_vector=SamplingData.load(to_local_path(self.target_vector_path)),
-            target_variable=SamplingData.load(to_local_path(self.target_variable_path)),
-            target_scalar=float(
-                numpy.load(to_local_path(self.target_scalar_path), allow_pickle=True)
-            ),
+            lf0=float(lf0),
+            sampling_length=int(sampling_length),
             speaker_id=self.speaker_id,
         )
 
@@ -92,8 +87,8 @@ class Dataset(BaseDataset[OutputData]):
         try:
             return preprocess(
                 self.datas[i].fetch(),
-                frame_rate=self.config.frame_rate,
-                frame_length=self.config.frame_length,
+                sampling_rate=self.config.sampling_rate,
+                data_proportion=self.config.data_proportion,
                 is_eval=self.is_eval,
             )
         except Exception as e:
@@ -146,96 +141,19 @@ class DatasetCollection:
                 assert_never(type)
 
 
-PathMap = dict[str, UPath]
-"""パスマップ。stemをキー、パスを値とする辞書型"""
-
-
-def _load_pathlist(pathlist_path: UPath, root_dir: UPath) -> PathMap:
-    """pathlistファイルを読み込みんでパスマップを返す。"""
-    path_list = [root_dir / p for p in pathlist_path.read_text().splitlines()]
-    return {p.stem: p for p in path_list}
-
-
-def get_data_paths(
-    root_dir: UPath | None, pathlist_paths: list[UPath]
-) -> tuple[list[str], list[PathMap]]:
-    """複数のpathlistファイルからstemリストとパスマップを返す。整合性も確認する。"""
-    if len(pathlist_paths) == 0:
-        raise ValueError("少なくとも1つのpathlist設定が必要です")
-
-    if root_dir is None:
-        root_dir = UPath(".")
-
-    path_mappings: list[PathMap] = []
-
-    # 最初のpathlistをベースにstemリストを作成
-    first_pathlist_path = pathlist_paths[0]
-    first_paths = _load_pathlist(first_pathlist_path, root_dir)
-    fn_list = list(first_paths.keys())
-    assert len(fn_list) > 0, f"ファイルが存在しません: {first_pathlist_path}"
-
-    path_mappings.append(first_paths)
-
-    # 残りのpathlistが同じstemリストを持つかチェック
-    for pathlist_path in pathlist_paths[1:]:
-        paths = _load_pathlist(pathlist_path, root_dir)
-        assert fn_list == list(paths.keys()), (
-            f"ファイルが一致しません: {pathlist_path} (expected: {len(fn_list)}, got: {len(paths)})"
-        )
-        path_mappings.append(paths)
-
-    return fn_list, path_mappings
-
-
-def get_datas(config: DataFileConfig) -> list[LazyInputData]:
-    """データを取得"""
-    (
-        fn_list,
-        (
-            feature_vector_pathmappings,
-            feature_variable_pathmappings,
-            target_vector_pathmappings,
-            target_variable_pathmappings,
-            target_scalar_pathmappings,
-        ),
-    ) = get_data_paths(
-        config.root_dir,
-        [
-            config.feature_vector_pathlist_path,
-            config.feature_variable_pathlist_path,
-            config.target_vector_pathlist_path,
-            config.target_variable_pathlist_path,
-            config.target_scalar_pathlist_path,
-        ],
-    )
-
-    fn_each_speaker = TypeAdapter(dict[str, list[str]]).validate_json(
-        config.speaker_dict_path.read_text()
-    )
-    speaker_ids = {
-        fn: speaker_id
-        for speaker_id, fns in enumerate(fn_each_speaker.values())
-        for fn in fns
-    }
-
-    datas = [
-        LazyInputData(
-            feature_vector_path=feature_vector_pathmappings[fn],
-            feature_variable_path=feature_variable_pathmappings[fn],
-            target_vector_path=target_vector_pathmappings[fn],
-            target_variable_path=target_variable_pathmappings[fn],
-            target_scalar_path=target_scalar_pathmappings[fn],
-            speaker_id=speaker_ids[fn],
-        )
-        for fn in fn_list
-    ]
-    return datas
-
-
 def create_dataset(config: DatasetConfig) -> DatasetCollection:
     """データセットを作成"""
-    # TODO: accent_estimatorのようにHDF5に対応させ、docs/にドキュメントを書く
-    datas = get_datas(config.train)
+    assert config.train_num is not None
+    datas = [
+        LazyInputData(
+            lf0_low=config.lf0_low,
+            lf0_high=config.lf0_high,
+            min_sampling_length=config.min_sampling_length,
+            max_sampling_length=config.max_sampling_length,
+            speaker_id=0,
+        )
+        for _ in range(config.train_num + config.test_num)
+    ]
 
     if config.seed is not None:
         random.Random(config.seed).shuffle(datas)
@@ -254,9 +172,5 @@ def create_dataset(config: DatasetConfig) -> DatasetCollection:
         train=_wrapper(trains, is_eval=False),
         test=_wrapper(tests, is_eval=False),
         eval=(_wrapper(tests, is_eval=True) if config.eval_for_test else None),
-        valid=(
-            _wrapper(get_datas(config.valid), is_eval=True)
-            if config.valid is not None
-            else None
-        ),
+        valid=None,
     )

@@ -34,8 +34,12 @@ class DatasetConfig(_Model):
     eval_for_test: bool
     eval_times_num: int = 1
     seed: int = 0
-    frame_rate: float
-    frame_length: int
+    lf0_low: float
+    lf0_high: float
+    sampling_rate: float
+    min_sampling_length: int
+    max_sampling_length: int
+    data_proportion: float
 
 
 class NetworkConfig(_Model):
@@ -54,7 +58,9 @@ class NetworkConfig(_Model):
 class ModelConfig(_Model):
     """モデルの設定"""
 
-    pass
+    data_proportion: float
+    adaptive_weighting_p: float
+    adaptive_weighting_eps: float
 
 
 class TrainConfig(_Model):
