@@ -89,6 +89,7 @@ class Dataset(BaseDataset[OutputData]):
                 self.datas[i].fetch(),
                 sampling_rate=self.config.sampling_rate,
                 data_proportion=self.config.data_proportion,
+                flow_type=self.config.flow_type,
                 is_eval=self.is_eval,
             )
         except Exception as e:

@@ -1,6 +1,7 @@
 """データ処理モジュール"""
 
 from dataclasses import dataclass
+from typing import Literal, assert_never
 
 import numpy
 import torch
@@ -52,11 +53,15 @@ def sigmoid(a: float | numpy.ndarray) -> float | numpy.ndarray:
 def sample_time_meanflow(data_proportion: float) -> tuple[float, float]:
     """MeanFlow用の時間サンプリング (t, r)"""
     rng = numpy.random.default_rng()
-    t = float(sigmoid(rng.standard_normal()))
+    t_sample = float(sigmoid(rng.standard_normal() * 1.0 + (-0.4)))
+    r_sample = float(sigmoid(rng.standard_normal() * 1.0 + (-0.4)))
+
+    t = max(t_sample, r_sample)
+    r = min(t_sample, r_sample)
+
     if rng.random() < data_proportion:
         r = t
-    else:
-        r = float(rng.random() * t)
+
     return t, r
 
 
@@ -65,6 +70,7 @@ def preprocess(
     *,
     sampling_rate: float,
     data_proportion: float,
+    flow_type: Literal["rectified_flow", "meanflow"],
     is_eval: bool,
 ) -> OutputData:
     """データ処理"""
@@ -77,11 +83,17 @@ def preprocess(
     ).reshape(-1, 1)
     target_wave *= numpy.sqrt(2)
 
-    if not is_eval:
-        t, r = sample_time_meanflow(data_proportion=data_proportion)
+    if is_eval:
+        t, r = 1.0, 0.0
     else:
-        t = 1.0
-        r = t
+        match flow_type:
+            case "meanflow":
+                t, r = sample_time_meanflow(data_proportion=data_proportion)
+            case "rectified_flow":
+                t = float(sigmoid(rng.standard_normal() * 1.0 + (-0.4)))
+                r = 0.0
+            case _:
+                assert_never(flow_type)
 
     h = t - r
 

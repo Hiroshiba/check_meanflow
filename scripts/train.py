@@ -230,7 +230,10 @@ def setup_training_context(
     generator = Generator(
         config=config, predictor=predictor_scripted, use_gpu=config.train.use_gpu
     )
-    evaluator = Evaluator(generator=generator)
+    evaluator = Evaluator(
+        generator=generator,
+        step_num=config.train.diffusion_step_num,
+    )
 
     # optimizer
     optimizer = make_optimizer(config_dict=config.train.optimizer, model=model)

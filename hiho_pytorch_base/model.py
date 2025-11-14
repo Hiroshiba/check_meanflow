@@ -1,15 +1,20 @@
 """モデルのモジュール。ネットワークの出力から損失を計算する。"""
 
 from dataclasses import dataclass
-from typing import Self
+from typing import Self, assert_never
 
 import torch
 from torch import Tensor, nn
-from torch.nn.functional import cross_entropy, mse_loss
+from torch.nn.functional import mse_loss
 
 from .batch import BatchOutput
 from .config import ModelConfig
-from .network.predictor import Predictor
+from .network.predictor import (
+    Predictor,
+    create_padding_mask,
+    get_lengths,
+    pad_tensor_list,
+)
 from .utility.pytorch_utility import detach_cpu
 from .utility.train_utility import DataNumProtocol
 
@@ -21,30 +26,16 @@ class ModelOutput(DataNumProtocol):
     loss: Tensor
     """逆伝播させる損失"""
 
-    loss_vector: Tensor
-    loss_variable: Tensor
-    loss_scalar: Tensor
-    accuracy: Tensor
+    mse_loss: Tensor
+    adaptive_weight_mean: Tensor | None
 
     def detach_cpu(self) -> Self:
         """全てのTensorをdetachしてCPUに移動"""
         self.loss = detach_cpu(self.loss)
-        self.loss_vector = detach_cpu(self.loss_vector)
-        self.loss_variable = detach_cpu(self.loss_variable)
-        self.loss_scalar = detach_cpu(self.loss_scalar)
-        self.accuracy = detach_cpu(self.accuracy)
+        self.mse_loss = detach_cpu(self.mse_loss)
+        if self.adaptive_weight_mean is not None:
+            self.adaptive_weight_mean = detach_cpu(self.adaptive_weight_mean)
         return self
-
-
-def accuracy(
-    output: Tensor,  # (B, ?)
-    target: Tensor,  # (B,)
-) -> Tensor:
-    """分類精度を計算"""
-    with torch.no_grad():
-        indexes = torch.argmax(output, dim=1)  # (B,)
-        correct = torch.eq(indexes, target).view(-1)  # (B,)
-        return correct.float().mean()
 
 
 class Model(nn.Module):
@@ -57,32 +48,99 @@ class Model(nn.Module):
 
     def forward(self, batch: BatchOutput) -> ModelOutput:
         """データをネットワークに入力して損失などを計算する"""
-        (
-            vector_output,  # (B, ?)
-            variable_output_list,  # [(L, ?)]
-            scalar_output,  # (B,)
-        ) = self.predictor(
-            feature_vector=batch.feature_vector,
-            feature_variable_list=batch.feature_variable_list,
+        if self.model_config.flow_type == "rectified_flow":
+            return self._forward_rectified_flow(batch)
+        elif self.model_config.flow_type == "meanflow":
+            return self._forward_meanflow(batch)
+        else:
+            assert_never(self.model_config.flow_type)
+
+    def _forward_rectified_flow(self, batch: BatchOutput) -> ModelOutput:
+        """RectifiedFlowの損失を計算"""
+        h = torch.zeros_like(batch.t)
+
+        predicted_v_list = self.predictor.forward_list(
+            wave_list=batch.input_wave_list,
+            lf0_list=batch.lf0_list,
+            t=batch.t,
+            h=h,
             speaker_id=batch.speaker_id,
         )
 
-        target_vector = batch.target_vector  # (B,)
-        variable_output = torch.cat(variable_output_list)
-        target_variable = torch.cat(batch.target_variable_list)
-        target_scalar = batch.target_scalar  # (B,)
+        predicted_v = torch.cat(predicted_v_list)
+        target_v = torch.cat(
+            [
+                (target_wave - noise_wave).squeeze(1)
+                for target_wave, noise_wave in zip(
+                    batch.target_wave_list, batch.noise_wave_list, strict=True
+                )
+            ]
+        )
 
-        loss_vector = cross_entropy(vector_output, target_vector)
-        loss_variable = mse_loss(variable_output, target_variable)
-        loss_scalar = mse_loss(scalar_output, target_scalar)
-        total_loss = loss_vector + loss_variable + loss_scalar
-        acc = accuracy(vector_output, target_vector)
+        mse = mse_loss(predicted_v, target_v)
 
         return ModelOutput(
-            loss=total_loss,
-            loss_vector=loss_vector,
-            loss_variable=loss_variable,
-            loss_scalar=loss_scalar,
-            accuracy=acc,
+            loss=mse,
+            mse_loss=mse,
+            adaptive_weight_mean=None,
+            data_num=batch.data_num,
+        )
+
+    def _forward_meanflow(self, batch: BatchOutput) -> ModelOutput:
+        """MeanFlowの損失を計算"""
+        lengths = get_lengths(batch.input_wave_list)  # (B,)
+        padded_input_wave = pad_tensor_list(batch.input_wave_list)  # (B, L, 1)
+        padded_lf0 = pad_tensor_list(batch.lf0_list)  # (B, L, 1)
+        mask = create_padding_mask(lengths)  # (B, 1, L)
+
+        padded_target_wave = pad_tensor_list(batch.target_wave_list)  # (B, L, 1)
+        padded_noise_wave = pad_tensor_list(batch.noise_wave_list)  # (B, L, 1)
+        padded_target_v = padded_target_wave - padded_noise_wave  # (B, L, 1)
+
+        def u_func(wave: Tensor, t: Tensor, r: Tensor) -> Tensor:
+            """JVP計算用のラッパー関数"""
+            h = t - r
+            return self.predictor(
+                padded_wave=wave.unsqueeze(-1),
+                padded_lf0=padded_lf0,
+                mask=mask,
+                t=t,
+                h=h,
+                speaker_id=batch.speaker_id,
+            ).squeeze(-1)
+
+        jvp_result: tuple[Tensor, Tensor] = torch.func.jvp(
+            func=u_func,
+            primals=(padded_input_wave.squeeze(-1), batch.t, batch.r),
+            tangents=(
+                padded_target_v.squeeze(-1),
+                torch.ones_like(batch.t),
+                torch.zeros_like(batch.r),
+            ),
+        )  # type: ignore
+        u_pred, du_dt = jvp_result  # (B, L), (B, L)
+
+        batch_size = batch.t.shape[0]
+        max_length = padded_input_wave.size(1)
+        h_expanded = batch.h.unsqueeze(1).expand(batch_size, max_length)  # (B, L)
+
+        u_tgt = padded_target_v.squeeze(-1) - h_expanded * du_dt  # (B, L)
+
+        p = self.model_config.adaptive_weighting_p
+        eps = self.model_config.adaptive_weighting_eps
+        mse_per_element = (u_pred - u_tgt.detach()) ** 2  # (B, L)
+        weight = 1 / (mse_per_element.detach() + eps) ** p  # (B, L)
+
+        mask_2d = mask.squeeze(1)  # (B, L)
+        masked_weighted_loss = weight * mse_per_element * mask_2d  # (B, L)
+        masked_mse = mse_per_element * mask_2d  # (B, L)
+
+        loss = masked_weighted_loss.sum() / mask_2d.sum()
+        mse = masked_mse.sum() / mask_2d.sum()
+
+        return ModelOutput(
+            loss=loss,
+            mse_loss=mse,
+            adaptive_weight_mean=weight.mean(),
             data_num=batch.data_num,
         )

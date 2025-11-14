@@ -9,15 +9,42 @@ from .conformer.encoder import Encoder
 from .transformer.utility import make_non_pad_mask
 
 
+def get_lengths(
+    tensor_list: list[Tensor],  # [(L, ?)]
+) -> Tensor:  # (B,)
+    """テンソルリストからlengthsを取得"""
+    device = tensor_list[0].device
+    lengths = torch.tensor([t.shape[0] for t in tensor_list], device=device)
+    return lengths
+
+
+def pad_tensor_list(
+    tensor_list: list[Tensor],  # [(L, ?)]
+) -> Tensor:  # (B, L, ?)
+    """テンソルリストをパディング"""
+    batch_size = len(tensor_list)
+    if batch_size == 1:
+        # NOTE: ONNX化の際にpad_sequenceがエラーになるため迂回
+        padded = tensor_list[0].unsqueeze(0)
+    else:
+        padded = pad_sequence(tensor_list, batch_first=True)
+    return padded
+
+
+def create_padding_mask(
+    lengths: Tensor,  # (B,)
+) -> Tensor:  # (B, 1, L)
+    """lengthsからパディングマスクを生成"""
+    mask = make_non_pad_mask(lengths).unsqueeze(-2).to(lengths.device)
+    return mask
+
+
 class Predictor(nn.Module):
     """メインのネットワーク"""
 
     def __init__(
         self,
-        feature_vector_size: int,
-        feature_variable_size: int,
         hidden_size: int,
-        target_vector_size: int,
         speaker_size: int,
         speaker_embedding_size: int,
         encoder: Encoder,
@@ -26,73 +53,71 @@ class Predictor(nn.Module):
 
         self.speaker_embedder = nn.Embedding(speaker_size, speaker_embedding_size)
 
-        input_size = feature_variable_size + speaker_embedding_size
+        input_size = 1 + 1 + 1 + 1 + speaker_embedding_size
         self.pre_conformer = nn.Linear(input_size, hidden_size)
         self.encoder = encoder
-
-        self.feature_vector_processor = nn.Linear(feature_vector_size, hidden_size)
-        self.vector_head = nn.Linear(hidden_size * 2, target_vector_size)
-        self.variable_head = nn.Linear(hidden_size, target_vector_size)
-        self.scalar_head = nn.Linear(hidden_size * 2, 1)
+        self.post = nn.Linear(hidden_size, 1)
 
     def forward(  # noqa: D102
         self,
         *,
-        feature_vector: Tensor,  # (B, ?)
-        feature_variable_list: list[Tensor],  # [(vL, ?)]
+        padded_wave: Tensor,  # (B, L, 1)
+        padded_lf0: Tensor,  # (B, L, 1)
+        mask: Tensor,  # (B, 1, L)
+        t: Tensor,  # (B,)
+        h: Tensor,  # (B,)
         speaker_id: Tensor,  # (B,)
-    ) -> tuple[Tensor, list[Tensor], Tensor]:  # (B, ?), [(vL, ?)], (B,)
-        device = feature_vector.device
-        batch_size = feature_vector.size(0)
+    ) -> Tensor:  # (B, L, 1)
+        batch_size = t.shape[0]
+        speaker_embedding = self.speaker_embedder(speaker_id)
 
-        lengths = torch.tensor(
-            [var_data.shape[0] for var_data in feature_variable_list], device=device
-        )
-
-        if batch_size == 1:
-            # NOTE: ONNX化の際にpad_sequenceがエラーになるため迂回
-            padded_variable = feature_variable_list[0].unsqueeze(0)  # (1, L, ?)
-        else:
-            padded_variable = pad_sequence(
-                feature_variable_list, batch_first=True
-            )  # (B, L, ?)
-
-        speaker_embedding = self.speaker_embedder(speaker_id)  # (B, ?)
-
-        max_length = padded_variable.size(1)
+        max_length = padded_wave.size(1)
         speaker_expanded = speaker_embedding.unsqueeze(1).expand(
             batch_size, max_length, -1
-        )  # (B, L, ?)
+        )
 
-        combined_variable = torch.cat(
-            [padded_variable, speaker_expanded], dim=2
-        )  # (B, L, ?)
+        t_expanded = t.unsqueeze(1).unsqueeze(2).expand(batch_size, max_length, 1)
+        h_expanded = h.unsqueeze(1).unsqueeze(2).expand(batch_size, max_length, 1)
 
-        h = self.pre_conformer(combined_variable)  # (B, L, ?)
+        combined = torch.cat(
+            [padded_wave, padded_lf0, t_expanded, h_expanded, speaker_expanded],
+            dim=2,
+        )
 
-        mask = make_non_pad_mask(lengths).unsqueeze(-2).to(device)  # (B, 1, L)
+        h = self.pre_conformer(combined)
 
-        encoded, _ = self.encoder(x=h, cond=None, mask=mask)  # (B, L, ?)
+        encoded, _ = self.encoder(x=h, cond=None, mask=mask)
 
-        variable_features = self.variable_head(encoded)  # (B, L, ?)
+        output = self.post(encoded)
 
-        mask_expanded = mask.squeeze(-2).unsqueeze(-1)  # (B, L, 1)
-        masked_encoded = encoded * mask_expanded  # (B, L, ?)
-        variable_sum = masked_encoded.sum(dim=1)  # (B, ?)
-        variable_mean = variable_sum / lengths.unsqueeze(-1).float()  # (B, ?)
+        return output
 
-        fixed_features = self.feature_vector_processor(feature_vector)  # (B, ?)
+    def forward_list(  # noqa: D102
+        self,
+        *,
+        wave_list: list[Tensor],  # [(L, 1)]
+        lf0_list: list[Tensor],  # [(L, 1)]
+        t: Tensor,  # (B,)
+        h: Tensor,  # (B,)
+        speaker_id: Tensor,  # (B,)
+    ) -> list[Tensor]:  # [(L,)]
+        lengths = get_lengths(wave_list)
+        padded_wave = pad_tensor_list(wave_list)
+        padded_lf0 = pad_tensor_list(lf0_list)
+        mask = create_padding_mask(lengths)
 
-        final_features = torch.cat([fixed_features, variable_mean], dim=1)  # (B, ?)
+        output = self(
+            padded_wave=padded_wave,
+            padded_lf0=padded_lf0,
+            mask=mask,
+            t=t,
+            h=h,
+            speaker_id=speaker_id,
+        )
 
-        vector_output = self.vector_head(final_features)  # (B, ?)
-        scalar_output = self.scalar_head(final_features).squeeze(-1)  # (B,)
+        output_list = [output[i, :length, 0] for i, length in enumerate(lengths)]
 
-        variable_output_list = [
-            variable_features[i, :length] for i, length in enumerate(lengths)
-        ]
-
-        return vector_output, variable_output_list, scalar_output
+        return output_list
 
 
 def create_predictor(config: NetworkConfig) -> Predictor:
@@ -112,10 +137,7 @@ def create_predictor(config: NetworkConfig) -> Predictor:
         feed_forward_kernel_size=3,
     )
     return Predictor(
-        feature_vector_size=config.feature_vector_size,
-        feature_variable_size=config.feature_variable_size,
         hidden_size=config.hidden_size,
-        target_vector_size=config.target_vector_size,
         speaker_size=config.speaker_size,
         speaker_embedding_size=config.speaker_embedding_size,
         encoder=encoder,

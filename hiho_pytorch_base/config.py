@@ -1,6 +1,6 @@
 """機械学習プロジェクトの設定モジュール"""
 
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -40,27 +40,26 @@ class DatasetConfig(_Model):
     min_sampling_length: int
     max_sampling_length: int
     data_proportion: float
+    flow_type: Literal["rectified_flow", "meanflow"]
 
 
 class NetworkConfig(_Model):
     """ニューラルネットワークの設定"""
 
-    feature_vector_size: int
-    feature_variable_size: int
     hidden_size: int
-    target_vector_size: int
     conformer_block_num: int
     conformer_dropout_rate: float
     speaker_size: int
     speaker_embedding_size: int
+    flow_type: Literal["rectified_flow", "meanflow"]
 
 
 class ModelConfig(_Model):
     """モデルの設定"""
 
-    data_proportion: float
     adaptive_weighting_p: float
     adaptive_weighting_eps: float
+    flow_type: Literal["rectified_flow", "meanflow"]
 
 
 class TrainConfig(_Model):
@@ -69,6 +68,7 @@ class TrainConfig(_Model):
     batch_size: int
     gradient_accumulation: int = 1
     eval_batch_size: int
+    diffusion_step_num: int
     log_epoch: int
     eval_epoch: int
     snapshot_epoch: int
@@ -114,6 +114,7 @@ class Config(_Model):
     def validate_config(self) -> None:
         """設定の妥当性を検証"""
         assert self.train.eval_epoch % self.train.log_epoch == 0
+        assert self.dataset.flow_type == self.network.flow_type == self.model.flow_type
 
     def add_git_info(self) -> None:
         """Git情報をプロジェクトタグに追加"""
