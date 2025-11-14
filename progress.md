@@ -69,11 +69,9 @@
 
 ## 2025-11-14
 
-### MeanFlow実装比較調査完了
+### 完了タスク
 
 元論文と5つのMeanFlow実装を徹底的に調査し、理論と実装の差異を明確化しました。
-
----
 
 ### MeanFlow理論概要
 
@@ -111,8 +109,6 @@ loss = ||u_θ(z_t, r, t) - stopgrad(u_tgt)||^2
 2. **JVP計算**: 時間微分項を計算するためにJVPが必須
 3. **r=tの割合制御**: `data_proportion` パラメータで制御（通常75%で `r=t`）
 4. **1-step生成**: `z_0 = z_1 - u(z_1, 0, 1)` で直接サンプリング可能
-
----
 
 ### 各実装の分析
 
@@ -182,8 +178,6 @@ loss = ||u_θ(z_t, r, t) - stopgrad(u_tgt)||^2
 
 **核心コード:** Lines 127-179
 
----
-
 ### 実装間の主な差異
 
 #### 1. 時間サンプリング（r=t割合）
@@ -236,8 +230,6 @@ loss = ||u_θ(z_t, r, t) - stopgrad(u_tgt)||^2
 | PyTorch(HaoyiZhu) | 1.0 | 0.01 | ✓ 最良 |
 | **haidog** | **0.5** | - | **競争力あり（FID 63.98）** |
 
----
-
 ### 注意すべき実装上の違い
 
 #### 🚨 クリティカルな差異
@@ -270,8 +262,6 @@ loss = ||u_θ(z_t, r, t) - stopgrad(u_tgt)||^2
 - haidogのみ `p=0.5`、他は全て `p=1.0`
 - 論文Table 1eでは `p=1.0` が最良だが、`p=0.5` も競争力あり
 
----
-
 ### 推奨実装とベストプラクティス
 
 #### 最も信頼できる実装
@@ -289,8 +279,77 @@ loss = ||u_θ(z_t, r, t) - stopgrad(u_tgt)||^2
 5. **時間変数**: `(t, t-r)` 形式がベスト
 6. **ネットワーク**: `model(z, t, h, y)` where `h = t - r`
 
+### 次のステップ
+
+`references/check_diffusion_sine` のRectifiedFlow実装を比較し、差があるか確認し、レポートをここにまとめる。
+元論文と不整合がある怪しい差異がある箇所を特定し、その内容を記録する。
+今回はMeanFlow実装との比較は一切不要。
+
 ---
+
+### 完了タスク
+
+`references/check_diffusion_sine` のRectifiedFlow実装を元論文（2209.03003v1.pdf）と比較調査しました。
+
+#### ファイル構成
+
+**主要ファイル:**
+- `check_diffusion_sine/model.py` - 損失計算とモデル定義
+- `check_diffusion_sine/network/predictor.py` - Conformerベースの速度予測ネットワーク
+- `check_diffusion_sine/generator.py` - ODEサンプリング（推論）
+- `check_diffusion_sine/dataset.py` - データ生成・前処理
+- `train.py` - 学習ループ
+
+#### 元論文との整合性チェック
+
+##### ✅ 一致している点
+
+| 項目 | 説明 |
+|------|------|
+| **基本アルゴリズム** | RectifiedFlowのアルゴリズム1に準拠 |
+| **Linear interpolation** | z_t = z_0 + t(z_1 - z_0) を正しく実装 |
+| **速度の定義** | v = z_1 - z_0 |
+| **損失関数** | \|\|v_θ(z_t, t) - v\|\|^2 のMSE loss |
+| **時間サンプリング** | logit-normal分布（`t = sigmoid(randn())`） |
+| **ODEソルバー** | Euler法を使用 |
+
+##### 📝 元論文と異なる点（許容範囲）
+
+| 項目 | 論文 | 実装 | 影響 |
+|------|------|------|------|
+| **ネットワーク** | U-Net/Transformer | Conformer + Postnet | 音声向け設計、問題なし |
+| **時間埋め込み** | 明示的記載なし | 直接特徴量結合 | シンプル、問題なし |
+| **条件付け** | 条件yの詳細なし | lf0（対数基本周波数） | タスク依存、問題なし |
+| **Reflow** | 提案されている | 未実装 | 性能向上の機会損失 |
+
+##### 📝 その他の実装の工夫
+
+- **分散調整**: sin波を√2倍して分散を1に調整（`dataset.py:70`）
+  - sin波の分散は0.5なので√2倍して1に正規化
+  - 論文に記載なし、データ正規化の実装上の工夫
+
+##### ⚠️ 非標準的な実装
+
+- **ODEサンプリングでt=1.0を評価**（`generator.py:56, 66-73`）
+  - `torch.linspace(0, 1, steps=N)`で最終点t=1を含む
+  - 標準的な左端点Euler法では終点を評価しない
+  - RectifiedFlowでは速度が定数のため実用上の影響は小さい
+
+#### 実装の特徴
+
+- logit-normal時間サンプリングを正しく実装
+- 基本的なRectifiedFlowアルゴリズムを理解した実装
+- 音声向けの工夫（Conformer、lf0条件付け）
+- Reflowは未実装（論文で提案されている性能向上手法）
+
+#### 結論
+
+この実装はRectifiedFlowの基本アルゴリズムを正しく理解し、実装しています。
 
 ### 次のステップ
 
-`references/check_diffusion_sine` のRectifiedFlow実装を比較し、差があるか確認する。
+MeanFlow実装をサイン波生成タスクで開始する。
+JAX公式実装（meanflow-jax）を参照しながらゼロから実装し、RectifiedFlowとの切り替えを可能にする。
+check_diffusion_sineを参考にしつつ、現在のリポジトリのテンプレート構造（hiho_pytorch_base）に合わせて実装し、Conformerネットワークを使用する。
+MeanFlowは公式実装に完全準拠し、`data_proportion=0.75`、時間変数形式`(t, h)`、adaptive weighting `p=1.0, eps=0.01`を適用する。
+学習モード切り替え（MeanFlow/RectifiedFlow）により同一条件での比較評価を可能にし、生成品質の定量的比較指標を策定する。
