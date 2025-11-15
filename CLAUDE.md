@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## プロジェクト概要
 
-このリポジトリは、フォークして使用することを前提とした**汎用機械学習フレームワーク**のベースです。PyTorchベースでマルチタスク学習、多話者学習に対応したneural networkの学習・推論システムを提供します。
+このリポジトリは、Mean Flow（T=0:データ、T=1:ノイズ）をサイン波で検証するプロジェクトです。比較のためRectified Flow（T=0:ノイズ、T=1:データ）も実装されており、両手法の特性評価が可能です。
 
 ## 主なコンポーネント
 

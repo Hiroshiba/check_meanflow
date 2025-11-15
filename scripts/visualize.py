@@ -283,6 +283,20 @@ lf0範囲: [{lazy_data.lf0_low:.2f}, {lazy_data.lf0_high:.2f}]
                 data_info = self._create_data_info(index, dataset_type)
 
                 with gr.Row():
+                    gr.Textbox(
+                        value=f"t = {data_info.t:.6f}",
+                        label="時間パラメータ",
+                        interactive=False,
+                        scale=1,
+                    )
+                    gr.Textbox(
+                        value=f"r = {data_info.r:.6f}",
+                        label="比率パラメータ",
+                        interactive=False,
+                        scale=1,
+                    )
+
+                with gr.Row():
                     with gr.Column():
                         gr.Markdown("### 入力波形")
                         gr.Plot(value=input_wave_plot, label="input_wave")
@@ -301,23 +315,11 @@ lf0範囲: [{lazy_data.lf0_low:.2f}, {lazy_data.lf0_high:.2f}]
                         gr.Plot(value=lf0_plot, label="lf0")
 
                 with gr.Row():
-                    with gr.Column():
-                        gr.Markdown("### パラメータ")
-                        gr.Textbox(
-                            value=f"{data_info.t:.6f}",
-                            label="時間パラメータ t",
-                            interactive=False,
-                        )
-                        gr.Textbox(
-                            value=f"{data_info.r:.6f}",
-                            label="比率パラメータ r",
-                            interactive=False,
-                        )
-                        gr.Textbox(
-                            value=str(data_info.speaker_id),
-                            label="話者ID",
-                            interactive=False,
-                        )
+                    gr.Textbox(
+                        value=str(data_info.speaker_id),
+                        label="話者ID",
+                        interactive=False,
+                    )
 
                 gr.Markdown("---")
                 gr.Textbox(

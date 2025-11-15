@@ -91,7 +91,7 @@ class Model(nn.Module):
         padded_lf0 = pad_tensor_list(batch.lf0_list)  # (B, L, 1)
         padded_target_wave = pad_tensor_list(batch.target_wave_list)  # (B, L, 1)
         padded_noise_wave = pad_tensor_list(batch.noise_wave_list)  # (B, L, 1)
-        padded_target_v = padded_target_wave - padded_noise_wave  # (B, L, 1)
+        padded_target_v = padded_noise_wave - padded_target_wave  # (B, L, 1)
 
         def u_func(wave: Tensor, t: Tensor, r: Tensor) -> Tensor:
             """JVP計算用のラッパー関数"""
@@ -119,7 +119,9 @@ class Model(nn.Module):
         batch_size = batch.t.shape[0]
         max_length = padded_input_wave.size(1)
         h_expanded = (
-            (batch.t - batch.r).unsqueeze(1).expand(batch_size, max_length)
+            (batch.t - batch.r)
+            .unsqueeze(1)
+            .expand(batch_size, max_length)  # FIXME: .view()に変えられそう
         )  # (B, L)
 
         u_tgt = padded_target_v.squeeze(-1) - h_expanded * du_dt  # (B, L)

@@ -74,6 +74,7 @@ def preprocess(
 ) -> OutputData:
     """データ処理"""
     rng = numpy.random.default_rng()
+
     target_wave = generate_sin_wave(
         lf0=d.lf0,
         phase=rng.random(),
@@ -82,20 +83,24 @@ def preprocess(
     ).reshape(-1, 1)
     target_wave *= numpy.sqrt(2)
 
-    if is_eval:
-        t, r = 1.0, 0.0
-    else:
-        match flow_type:
-            case "meanflow":
-                t, r = sample_time_meanflow(data_proportion=data_proportion)
-            case "rectified_flow":
-                t = float(sigmoid(rng.standard_normal() * 1.0 + (-0.4)))
-                r = 0.0
-            case _:
-                assert_never(flow_type)
-
     noise_wave = rng.standard_normal(target_wave.shape)
-    input_wave = noise_wave + t * (target_wave - noise_wave)
+
+    match flow_type:
+        case "meanflow":
+            if is_eval:
+                t, r = 1.0, 0.0
+            else:
+                t, r = sample_time_meanflow(data_proportion=data_proportion)
+            input_wave = target_wave + t * (noise_wave - target_wave)
+        case "rectified_flow":
+            if is_eval:
+                t, r = 0.0, 0.0
+            else:
+                t = float(sigmoid(rng.standard_normal()))
+                r = 0.0
+            input_wave = noise_wave + t * (target_wave - noise_wave)
+        case _:
+            assert_never(flow_type)
 
     lf0_array = numpy.full((d.sampling_length, 1), d.lf0, dtype=numpy.float32)
 
