@@ -145,12 +145,8 @@ shape: {tuple(output_data.target_scalar.shape)}
 
         return self.figure_state.feature_variable_fig
 
-    def _setup_plots(
-        self, index: int, dataset_type: DatasetType
-    ) -> tuple[Figure, Figure]:
+    def _setup_plots(self, output_data: OutputData) -> tuple[Figure, Figure]:
         """プロットを作成または更新"""
-        output_data = self._get_output_data(index, dataset_type)
-
         # データの取得と整形
         feature_vector_data = output_data.feature_vector.cpu().numpy().flatten()
         feature_variable_data = output_data.feature_variable.cpu().numpy().flatten()
@@ -161,11 +157,10 @@ shape: {tuple(output_data.target_scalar.shape)}
 
         return (feature_vector_plot, feature_variable_plot)
 
-    def _create_data_info(self, index: int, dataset_type: DatasetType) -> DataInfo:
+    def _create_data_info(
+        self, output_data: OutputData, lazy_data: LazyInputData
+    ) -> DataInfo:
         """データ情報を作成"""
-        output_data = self._get_output_data(index, dataset_type)
-        lazy_data = self._get_lazy_data(index, dataset_type)
-
         target_vector = output_data.target_vector.cpu().numpy()
         target_scalar = float(output_data.target_scalar.item())
         speaker_id = int(output_data.speaker_id.item())
@@ -207,11 +202,13 @@ shape: {tuple(output_data.target_scalar.shape)}
 
             @gr.render(inputs=[current_index, current_dataset_type])
             def render_content(index: int, dataset_type: DatasetType) -> None:
-                # プロットとデータ情報を取得
+                output_data = self._get_output_data(index, dataset_type)
+                lazy_data = self._get_lazy_data(index, dataset_type)
+
                 feature_vector_plot, feature_variable_plot = self._setup_plots(
-                    index, dataset_type
+                    output_data
                 )
-                data_info = self._create_data_info(index, dataset_type)
+                data_info = self._create_data_info(output_data, lazy_data)
 
                 with gr.Row():
                     with gr.Column():
