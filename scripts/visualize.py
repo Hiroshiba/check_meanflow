@@ -200,11 +200,9 @@ lf0範囲: [{lazy_data.lf0_low:.2f}, {lazy_data.lf0_high:.2f}]
         return self.figure_state.lf0_fig
 
     def _setup_plots(
-        self, index: int, dataset_type: DatasetType
+        self, output_data: OutputData
     ) -> tuple[Figure, Figure, Figure, Figure]:
         """プロットを作成または更新"""
-        output_data = self._get_output_data(index, dataset_type)
-
         # データの取得と整形
         input_wave_data = output_data.input_wave.cpu().numpy().flatten()
         target_wave_data = output_data.target_wave.cpu().numpy().flatten()
@@ -219,11 +217,10 @@ lf0範囲: [{lazy_data.lf0_low:.2f}, {lazy_data.lf0_high:.2f}]
 
         return (input_wave_plot, target_wave_plot, noise_wave_plot, lf0_plot)
 
-    def _create_data_info(self, index: int, dataset_type: DatasetType) -> DataInfo:
+    def _create_data_info(
+        self, output_data: OutputData, lazy_data: LazyInputData
+    ) -> DataInfo:
         """データ情報を作成"""
-        output_data = self._get_output_data(index, dataset_type)
-        lazy_data = self._get_lazy_data(index, dataset_type)
-
         input_wave = output_data.input_wave.cpu().numpy()
         target_wave = output_data.target_wave.cpu().numpy()
         noise_wave = output_data.noise_wave.cpu().numpy()
@@ -273,14 +270,16 @@ lf0範囲: [{lazy_data.lf0_low:.2f}, {lazy_data.lf0_high:.2f}]
 
             @gr.render(inputs=[current_index, current_dataset_type])
             def render_content(index: int, dataset_type: DatasetType) -> None:
-                # プロットとデータ情報を取得
+                output_data = self._get_output_data(index, dataset_type)
+                lazy_data = self._get_lazy_data(index, dataset_type)
+
                 (
                     input_wave_plot,
                     target_wave_plot,
                     noise_wave_plot,
                     lf0_plot,
-                ) = self._setup_plots(index, dataset_type)
-                data_info = self._create_data_info(index, dataset_type)
+                ) = self._setup_plots(output_data)
+                data_info = self._create_data_info(output_data, lazy_data)
 
                 with gr.Row():
                     gr.Textbox(
