@@ -4,6 +4,8 @@ import argparse
 import re
 from pathlib import Path
 
+import japanize_matplotlib  # noqa: F401
+import matplotlib.pyplot as plt
 import yaml
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -34,6 +36,30 @@ def _get_predictor_model_path(
     return model_path
 
 
+def _save_wave_grid(
+    waves: list[list[float]],
+    output_path: Path,
+) -> None:
+    """9枚の波形を3×3のSVG画像として保存"""
+    fig, axes = plt.subplots(3, 3, figsize=(12, 12))
+    fig.suptitle("生成波形", fontsize=16)
+
+    for idx, (ax, wave) in enumerate(zip(axes.flat, waves, strict=False)):
+        ax.plot(wave)
+        ax.set_title(f"波形 #{idx + 1}", fontsize=10)
+        ax.set_xlabel("Sample Index", fontsize=8)
+        ax.set_ylabel("Amplitude", fontsize=8)
+        ax.tick_params(labelsize=8)
+        ax.grid(True, alpha=0.3)
+
+    for idx in range(len(waves), 9):
+        axes.flat[idx].axis("off")
+
+    fig.tight_layout()
+    fig.savefig(output_path, format="svg")
+    plt.close(fig)
+
+
 def generate(
     model_dir: UPath | None,
     predictor_iteration: int | None,
@@ -43,6 +69,7 @@ def generate(
     output_dir: Path,
     use_gpu: bool,
     num_files: int | None,
+    step_num: int | None,
 ):
     """設定にあるデータセットから生成する"""
     if predictor_path is None and model_dir is not None:
@@ -61,6 +88,9 @@ def generate(
     save_arguments(output_dir / "arguments.yaml", generate, locals())
 
     config = Config.from_dict(yaml.safe_load(config_path.read_text()))
+
+    if step_num is None:
+        step_num = config.train.diffusion_step_num
 
     generator = Generator(
         config=config, predictor=to_local_path(predictor_path), use_gpu=use_gpu
@@ -81,14 +111,26 @@ def generate(
         collate_fn=collate_dataset_output,
     )
 
+    all_waves: list[list[float]] = []
     batch: BatchOutput
     for batch in tqdm(data_loader, desc="generate"):
         batch.to_device(device="cuda" if use_gpu else "cpu", non_blocking=True)
-        _ = generator(
-            feature_vector=batch.feature_vector,
-            feature_variable_list=batch.feature_variable_list,
+        output = generator(
+            noise_wave_list=batch.noise_wave_list,
+            lf0_list=batch.lf0_list,
             speaker_id=batch.speaker_id,
+            step_num=step_num,
         )
+
+        for wave_tensor in output.wave_list:
+            wave_data = wave_tensor.cpu().numpy().tolist()
+            all_waves.append(wave_data)
+
+    for grid_idx in range(0, len(all_waves), 9):
+        wave_batch = all_waves[grid_idx : grid_idx + 9]
+        output_path = output_dir / f"generated_waves_{grid_idx // 9:04d}.svg"
+        _save_wave_grid(wave_batch, output_path)
+        print(f"Saved: {output_path}")
 
 
 if __name__ == "__main__":
@@ -101,4 +143,5 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", required=True, type=Path)
     parser.add_argument("--use_gpu", action="store_true")
     parser.add_argument("--num_files", type=int)
+    parser.add_argument("--step_num", type=int)
     generate(**vars(parser.parse_args()))
